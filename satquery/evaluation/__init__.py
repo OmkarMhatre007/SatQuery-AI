@@ -5,7 +5,7 @@ Team: THE FANTASTIC 6 | SIH 2026 (Problem Statement SIH26167)
 """
 
 from .schemas import EvaluationRecord, ConfidenceBreakdown, BenchmarkItem
-from .adapters import PipelineAdapter
+from .adapters import PipelineAdapter, VLMAdapter
 from .guardrails import NumericalGuardrail
 
 __all__ = [
@@ -13,5 +13,7 @@ __all__ = [
     "ConfidenceBreakdown",
     "BenchmarkItem",
     "PipelineAdapter",
+    "VLMAdapter",
     "NumericalGuardrail",
 ]
+

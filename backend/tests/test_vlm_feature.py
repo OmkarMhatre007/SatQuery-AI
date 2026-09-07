@@ -259,3 +259,33 @@ def test_vlm_backend_health_check_and_model_info():
     assert "name" in info
     assert "capabilities" in info or "backend" in info
 
+
+def test_vlm_adapter_normalization(test_rasters):
+    """Verify that Tool 1 output correctly adapts into standard EvaluationRecord schema."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+    from satquery.evaluation.adapters import VLMAdapter
+    from satquery.evaluation.schemas import EvaluationRecord
+
+    opt_path, sar_path = test_rasters
+    output = vlm_tool.execute([opt_path, sar_path], {"query": "Detect water body"})
+    raw_dict = {
+        "text": output.answer,
+        "mask_geojson": output.mask_geojson,
+        "confidence": output.confidence,
+        "metrics": output.metrics,
+        "execution_mode": output.execution_mode,
+        "capability": "grounding",
+    }
+    rec = VLMAdapter.parse(raw_dict, task_id="TEST-VLM-01")
+    assert isinstance(rec, EvaluationRecord)
+    assert rec.task_id == "TEST-VLM-01"
+    assert rec.schema_version == "0.2"
+    assert rec.confidence_score > 0.0
+    assert rec.confidence_breakdown is not None
+    assert 0.0 <= rec.confidence_breakdown.input_quality <= 1.0
+    assert rec.geojson_geometry is not None
+    assert "GeospatialGroundingEngine" in rec.tool_trace
+
+

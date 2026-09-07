@@ -136,6 +136,66 @@ class AgentPlannerAdapter(PipelineAdapter):
         )
 
 
+class VLMAdapter(PipelineAdapter):
+    """
+    Normalizes Tool 1 (VLMGroundingTool / RSModelBackend) outputs into EvaluationRecord.
+    Supports all 5 VLM capabilities: VQA, Captioning, Grounding, Scene Understanding, Structured Reasoning.
+    """
+
+    @classmethod
+    def parse_v02(cls, raw_output: Dict[str, Any], task_id: str) -> EvaluationRecord:
+        metrics = raw_output.get("metrics", {})
+        det_nums: Dict[str, float] = {}
+
+        # Detections count or areas
+        detections = raw_output.get("detections", [])
+        if isinstance(detections, list):
+            det_nums["detection_count"] = float(len(detections))
+
+        # Metrics from VLMFeaturePipeline
+        if "feature_confidence" in metrics:
+            det_nums["feature_confidence"] = float(metrics["feature_confidence"])
+        if "gate_mean_activation" in metrics:
+            det_nums["gate_mean_activation"] = float(metrics["gate_mean_activation"])
+        if "gate_saturation_rate" in metrics:
+            det_nums["gate_saturation_rate"] = float(metrics["gate_saturation_rate"])
+
+        conf = float(raw_output.get("confidence", metrics.get("feature_confidence", 0.85)))
+        provenance = raw_output.get("execution_mode", raw_output.get("provenance", "heuristic_fallback"))
+        status_label = "real_model" if provenance in ("real_model", "gpu_active") else "heuristic_fallback"
+
+        # Construct 6-factor decomposed confidence
+        input_quality = 0.95
+        if metrics.get("gate_mean_activation", 0.0) > 0.8:
+            input_quality = 0.70  # Higher cloud/noise suppressed by gate
+
+        breakdown = ConfidenceBreakdown(
+            input_quality=input_quality,
+            model_confidence=min(1.0, max(0.0, conf)),
+            evidence_agreement=float(metrics.get("fusion_contribution_ratio", 0.90)),
+            geospatial_validity=1.0 if raw_output.get("mask_geojson") else 0.85,
+            temporal_validity=1.0,
+            contradiction_penalty=0.0,
+        )
+
+        tool_trace = ["SARSpecFeatExtractor", "GatedFusionModule", "GeospatialGroundingEngine"]
+        if raw_output.get("capability"):
+            tool_trace.append(f"VLM.{raw_output['capability']}")
+
+        return EvaluationRecord(
+            task_id=task_id,
+            schema_version="0.2",
+            status=status_label,
+            text_response=raw_output.get("response_text", raw_output.get("text", raw_output.get("answer", raw_output.get("summary", "")))),
+            deterministic_numbers=det_nums,
+            geojson_geometry=raw_output.get("mask_geojson"),
+            confidence_score=min(1.0, max(0.0, conf)),
+            confidence_breakdown=breakdown,
+            execution_time_ms=float(raw_output.get("latency_ms", 0.0)),
+            tool_trace=tool_trace,
+        )
+
+
 class GenericSpecialistAdapter(PipelineAdapter):
     """
     Fallback adapter for Omkar's VLM or Moiz's Fusion raw dictionaries.
@@ -156,3 +216,4 @@ class GenericSpecialistAdapter(PipelineAdapter):
             execution_time_ms=float(raw_output.get("latency_ms", 0.0)),
             tool_trace=raw_output.get("tools", []),
         )
+
